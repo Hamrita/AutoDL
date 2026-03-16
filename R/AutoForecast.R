@@ -451,7 +451,7 @@ train_deep_model <- function(X_train,y_train,X_val=NULL,y_val=NULL,
         .getitem=function(i) list(x=self$X[i,],y=self$y[i,]),
         .length=function() dim(self$X)[1L]
       )(Xm,yv)
-    } else TimeSeriesDataset(Xm,yv)
+    } else ds <-TimeSeriesDataset(Xm,yv)
     dataloader(ds,batch_size=batch_size,shuffle=FALSE)
   }
 
@@ -593,15 +593,28 @@ direct_forecast <- function(direct_models,last_window,scaler,device=get_device()
   Xt <- sv$X[1:nt,,drop=FALSE]; yt <- sv$y[1:nt]
   Xv <- sv$X[(nt+1):n,,drop=FALSE]; yv <- sv$y[(nt+1):n]
 
-  eval_hp <- function(hp_list){
-    tryCatch({
-      r <- train_deep_model(Xt,yt,Xv,yv,lags=lags,arch=arch_l,
-             hidden_size=hp_list$hidden_size,num_layers=hp_list$num_layers,
-             dropout=hp_list$dropout,dense_units=hp_list$dense_units,lr=hp_list$lr,
-             epochs=epochs,batch_size=hp_list$batch_size,patience=patience,
-             horizon=horizon,verbose=0L,device=device)
-      -min(r$history$val_loss,na.rm=TRUE)
-    },error=function(e) -Inf)
+ eval_hp <- function(hp_list) {
+    res <- tryCatch({
+      r <- train_deep_model(
+        Xt, yt, Xv, yv, lags = lags, arch = arch_l,
+        hidden_size = hp_list$hidden_size, num_layers = hp_list$num_layers,
+        dropout = hp_list$dropout, dense_units = hp_list$dense_units, 
+        lr = hp_list$lr, epochs = epochs, batch_size = hp_list$batch_size, 
+        patience = patience, horizon = horizon, verbose = 0L, device = device
+      )
+      
+      # Extract the best validation loss
+      val_loss <- min(r$history$val_loss, na.rm = TRUE)
+      
+      # If the model didn't converge or returned NaN/Inf, penalize it
+      if (!is.finite(val_loss)) -9999 else -val_loss
+      
+    }, error = function(e) {
+      # Log the error if needed and return a penalty score
+      if (verbose > 0) message("BO Step Failed: ", e$message)
+      -9999
+    })
+    return(res)
   }
 
   set.seed(seed)
